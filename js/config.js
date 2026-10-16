@@ -7,8 +7,8 @@
 // NEVER put the "secret" / "service_role" key in this file.
 // =====================================================================
 window.APP_CONFIG = {
-  SUPABASE_URL: "https://YOUR-PROJECT.supabase.co",
-  SUPABASE_ANON_KEY: "YOUR-PUBLISHABLE-KEY",
+  SUPABASE_URL: "https://weitilyndzvpjoppnklk.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_lZZ5o8TcKfcYOlu9Xx3A-w_5GcpN2cR",
 
   APP_NAME: "Teph Seal Budgets",
   MARKET: "Utah",

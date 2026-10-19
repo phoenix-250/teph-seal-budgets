@@ -47,6 +47,7 @@ const S = {
   tab: null,
   month: new Date(today.getFullYear(), today.getMonth(), 1),
   cat: "all", group: "manager", sheet: null, loadedFor: null,
+  payView: "log", queue: [], entered: [], queueErr: "",   // admin payroll list
 };
 
 /* ---------- 3. Budget math ---------- */
@@ -158,11 +159,11 @@ function recentBlock(stores) {
 }
 function txRow(e, inStore) {
   const d = e.spent_on ? new Date(e.spent_on + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
-  const canDel = isAdmin() || e.created_by === S.me.id;
+  const canDel = isAdmin() || (e.created_by === S.me.id && !e.processed);
   const title = e.employee_name ? `${esc(e.employee_name)} · ${esc(e.item || "Pay")}` : esc(e.item || "Purchase");
   const hrs = e.hours ? `<span>${esc(+e.hours)} hrs × ${money2(num(e.rate))}</span>·` : "";
   return `<div class="tx"><div class="tx-item">${title}</div><div class="tx-amt num">${money2(num(e.amount))}</div>
-    <div class="tx-meta"><span class="pill neutral">${esc(catName(e.category_id))}</span>${hrs}${inStore ? "" : `<span>${esc(storeName(e.store_id))}</span>·`}<span>${esc(d)}</span>${e.vendor ? `·<span>${esc(e.vendor)}</span>` : ""}·<span>${esc(nameOf(e.created_by))}</span></div>
+    <div class="tx-meta"><span class="pill neutral">${esc(catName(e.category_id))}</span>${e.processed ? `<span class="pill good">In payroll</span>` : ""}${hrs}${inStore ? "" : `<span>${esc(storeName(e.store_id))}</span>·`}<span>${esc(d)}</span>${e.vendor ? `·<span>${esc(e.vendor)}</span>` : ""}·<span>${esc(nameOf(e.created_by))}</span></div>
     ${canDel ? `<button class="link" data-del="spend" data-id="${esc(e.id)}">Remove</button>` : ""}</div>`;
 }
 function moveRow(m) {
@@ -272,6 +273,8 @@ function vPay() {
   const cats = payCats(), P = S.pay, pool = payPool();
   if (!S.stores.length) return `<div class="card"><h2>Pay</h2><p class="hint">No stores have been set up yet.</p></div>`;
   if (!cats.length) return `<div class="card"><h2>Pay</h2><p class="hint">No pay categories. ${isAdmin() ? "In Stores → Categories, set Extra Pay to “Paid to employees”." : "Ask your admin to set one up."}</p></div>`;
+  const viewTog = isAdmin() ? `<div class="toggle2" role="group" aria-label="Pay view"><button type="button" data-pay="view" data-v="log" aria-pressed="${S.payView === "log"}">Log pay</button><button type="button" data-pay="view" data-v="queue" aria-pressed="${S.payView === "queue"}">To enter${S.queue.length ? " · " + S.queue.length : ""}</button></div>` : "";
+  if (isAdmin() && S.payView === "queue") return `<div class="pay">${viewTog}${vQueue()}</div>`;
   if (!S.stores.some((s) => s.id === P.storeId)) { const last = ls.get("tsb-pay-store"); P.storeId = (pool.find((s) => s.id === last) || pool[0] || S.stores[0]).id; }
   if (!cats.some((c) => c.id === P.catId)) P.catId = cats[0].id;
   const c = payCalc(), others = S.stores.filter((s) => !pool.some((x) => x.id === s.id));
@@ -281,7 +284,7 @@ function vPay() {
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 8);
   const pb = cats.length > 1 ? `<div class="toggle2" role="group" aria-label="Type">${cats.slice(0, 2).map((k) => `<button type="button" data-pay="cat" data-v="${esc(k.id)}" aria-pressed="${k.id === P.catId}">${esc(k.name)}</button>`).join("")}</div>${cats.length > 2 ? `<div class="chipsw" style="margin-top:8px">${cats.slice(2).map((k) => `<button class="chip lg" data-pay="cat" data-v="${esc(k.id)}" aria-pressed="${k.id === P.catId}">${esc(k.name)}</button>`).join("")}</div>` : ""}` : "";
   return `<div class="pay">
-    ${pb}
+    ${viewTog}${pb}
     <section><div class="step-label"><b>Store</b></div>
       <div class="chipsw">${pool.map((s) => `<button class="chip lg" data-pay="store" data-v="${esc(s.id)}" aria-pressed="${s.id === P.storeId}">${esc(s.name)}</button>`).join("")}</div>
       ${others.length ? `<select id="pay-other-store" style="margin-top:8px;width:100%;min-height:46px;padding:8px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface)"><option value="">${pool.length ? "Another store…" : "Pick a store…"}</option>${others.map((s) => `<option value="${esc(s.id)}" ${s.id === P.storeId ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>` : ""}
@@ -315,6 +318,44 @@ function vPay() {
     <section class="sec"><div class="sec-head"><h2>Recent at ${esc(storeName(P.storeId))}</h2><span class="hint">${esc(monthLabel())}</span></div>
       <div class="list">${recent.length ? recent.map((e) => txRow(e, true)).join("") : `<div class="empty">No pay logged here this month.</div>`}</div></section>
   </div>`;
+}
+/* Payroll list (admin): pay entries not yet entered in payroll, from any month. */
+const fmtDay = (d) => (d ? new Date(String(d).slice(0, 10) + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "");
+function payMeta(e) {
+  return `<span class="pill neutral">${esc(catName(e.category_id))}</span>${e.hours ? `<span class="num">${esc(+e.hours)} hrs × ${money2(num(e.rate))}</span>·` : ""}<span>${esc(storeName(e.store_id))}</span>·<span>${esc(fmtDay(e.spent_on))}</span>${e.vendor ? `·<span>${esc(e.vendor)}</span>` : ""}·<span>${esc(nameOf(e.created_by))}</span>`;
+}
+function vQueue() {
+  if (S.queueErr) return `<div class="card"><h2>Payroll list unavailable</h2><p class="hint">${esc(S.queueErr)}</p></div>`;
+  const q = S.queue, total = q.reduce((a, e) => a + num(e.amount), 0);
+  return `<section class="card"><div class="sec-head"><div><div class="label">To enter in payroll</div><div class="hero-big num" style="font-size:40px">${money2(total)}</div><div class="hint">${q.length} entr${q.length === 1 ? "y" : "ies"} · all months</div></div>
+      ${q.length > 1 ? `<button class="btn ghost sm" data-act="pr-all">Mark all ${q.length} entered</button>` : ""}</div>
+      <p class="hint" style="margin:0">Tap <b>Entered</b> after you key it into payroll. It moves to history below; nothing is deleted.</p></section>
+    <section class="sec"><div class="list">${q.length ? q.map((e) => `<div class="tx"><div class="tx-item">${esc(e.employee_name || "Employee")} · ${esc(e.item || "Pay")}</div><div class="tx-amt num">${money2(num(e.amount))}</div>
+      <div class="tx-meta">${payMeta(e)}</div><button class="btn sm" data-act="pr-mark" data-id="${esc(e.id)}">Entered</button></div>`).join("")
+      : `<div class="empty">All caught up. Nothing waiting to go into payroll.</div>`}</div></section>
+    <section class="sec"><div class="sec-head"><h2>Recently entered</h2><span class="hint">last ${S.entered.length}</span></div>
+      <div class="list">${S.entered.length ? S.entered.map((e) => `<div class="tx"><div class="tx-item">${esc(e.employee_name || "Employee")} · ${esc(e.item || "Pay")}</div><div class="tx-amt num">${money2(num(e.amount))}</div>
+      <div class="tx-meta">${payMeta(e)}·<span class="pill good">Entered ${esc(fmtDay(e.processed_at))}${e.processed_by ? " · " + esc(nameOf(e.processed_by)) : ""}</span></div><button class="link" data-act="pr-undo" data-id="${esc(e.id)}">Undo</button></div>`).join("")
+      : `<div class="empty">Nothing marked yet.</div>`}</div></section>`;
+}
+async function markEntered(ids, on) {
+  const row = on ? { processed: true, processed_at: new Date().toISOString(), processed_by: S.me.id } : { processed: false, processed_at: null, processed_by: null };
+  try { await must(sb.from("spend").update(row).in("id", ids)); await loadAll(); flash(on ? `Marked ${ids.length} entered.` : "Moved back to the list."); }
+  catch (err) { flash(errText(err)); }
+}
+async function loadQueue() {
+  S.queueErr = "";
+  const ids = S.cats.filter((c) => c.pays_people).map((c) => c.id);
+  if (!isAdmin() || !ids.length) { S.queue = []; S.entered = []; return; }
+  try {
+    [S.queue, S.entered] = await Promise.all([
+      must(sb.from("spend").select("*").in("category_id", ids).eq("processed", false).order("spent_on").order("created_at")),
+      must(sb.from("spend").select("*").in("category_id", ids).eq("processed", true).order("processed_at", { ascending: false }).limit(40)),
+    ]);
+  } catch (err) {
+    S.queue = []; S.entered = [];
+    S.queueErr = /processed/i.test(err.message || "") ? "The database update hasn't been run yet (migration 002)." : errText(err);
+  }
 }
 function payTotalHTML(c) {
   if (S.pay.mode === "hours" && c.q > 0 && c.rate > 0) return `${money2(c.amt)}<small>${c.q} hrs × ${money2(c.rate)}/hr</small>`;
@@ -361,6 +402,7 @@ document.addEventListener("click", (e) => {
   if (k === "emp") P.empId = P.empId === v ? null : v;
   if (k === "mode") { if (P.mode !== v) P.qty = ""; P.mode = v; }
   if (k === "reason") P.reason = v;
+  if (k === "view") { S.payView = v; window.scrollTo(0, 0); }
   render();
 });
 document.addEventListener("input", (e) => {
@@ -635,6 +677,7 @@ async function loadAll() {
     S.budgets = {}; budgets.forEach((r) => { (S.budgets[r.store_id] = S.budgets[r.store_id] || {})[r.category_id] = num(r.amount); });
     S.people = {}; people.forEach((p) => { S.people[p.id] = p; });
     if (S.people[S.me.id]) S.me = S.people[S.me.id];
+    await loadQueue();
   } catch (err) {
     const b = $("#banner"); b.hidden = false; b.textContent = "Couldn't load the latest numbers: " + errText(err);
   }
@@ -645,10 +688,10 @@ async function saveCats(list) {
 }
 function exportCSV() {
   const ids = new Set(visibleStores().map((s) => s.id)), q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const rows = [["Date", "Store", "Area manager", "Category", "Employee", "Item / reason", "Vendor/note", "Hours", "Rate", "Amount", "Logged by"]];
+  const rows = [["Date", "Store", "Area manager", "Category", "Employee", "Item / reason", "Vendor/note", "Hours", "Rate", "Amount", "Logged by", "Entered in payroll"]];
   S.spend.filter((e) => ids.has(e.store_id)).sort((a, b) => String(a.spent_on).localeCompare(String(b.spent_on))).forEach((e) => {
     const s = S.stores.find((x) => x.id === e.store_id) || {};
-    rows.push([e.spent_on, storeName(e.store_id), nameOf(s.manager_id), catName(e.category_id), e.employee_name || "", e.item, e.vendor, e.hours ?? "", e.rate ?? "", num(e.amount).toFixed(2), nameOf(e.created_by)]);
+    rows.push([e.spent_on, storeName(e.store_id), nameOf(s.manager_id), catName(e.category_id), e.employee_name || "", e.item, e.vendor, e.hours ?? "", e.rate ?? "", num(e.amount).toFixed(2), nameOf(e.created_by), e.processed ? String(e.processed_at || "").slice(0, 10) || "yes" : ""]);
   });
   const blob = new Blob([rows.map((r) => r.map(q).join(",")).join("\n")], { type: "text/csv" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `budget-spend-${monthStart().slice(0, 7)}.csv`;
@@ -757,6 +800,9 @@ document.addEventListener("click", async (e) => {
   if (a === "add-person") return addPersonSheet();
   if (a === "edit-person") return personSheet(id);
   if (a === "csv") return exportCSV();
+  if (a === "pr-mark") { t.disabled = true; return markEntered([id], true); }
+  if (a === "pr-undo") return markEntered([id], false);
+  if (a === "pr-all") { if (!t.dataset.armed) { t.dataset.armed = 1; t.textContent = `Confirm: mark all ${S.queue.length}`; return; } t.disabled = true; return markEntered(S.queue.map((e) => e.id), true); }
   if (a === "signout") return sb.auth.signOut();
   if (a === "archive-cat") { if (!t.dataset.armed) { t.dataset.armed = 1; t.textContent = "Confirm"; return; } return saveCats([sb.from("categories").update({ archived: true }).eq("id", id)]); }
   if (a === "toggle-pay-cat") { const c = S.cats.find((x) => x.id === id); return saveCats([sb.from("categories").update({ pays_people: !c.pays_people }).eq("id", id)]); }

@@ -26,6 +26,8 @@ see the whole market, edit budgets, manage people, and move money between stores
   SSNs, or bank info. Managers add/edit employees for their own stores; admin for all.
 - `spend` (store_id, category_id, item, vendor, amount, spent_on, employee_id, employee_name, hours, rate, created_by)
   — for pay in hours, amount must equal round(hours × rate, 2) (database check).
+  processed / processed_at / processed_by (migration 002): admin marks pay "Entered" in payroll from
+  Pay → "To enter". Entered rows stay forever as history; non-admins can't delete them.
 - `moves` (month = first day of month, category_id, from_store, to_store, amount, note, created_by)
 - Effective budget for a store/month = store_budgets + moves in − moves out (computed in `budgetOf` in app.js).
 
